@@ -1,0 +1,10 @@
+---
+# Variables de l'environnement STAGING
+target_env: staging
+namespace: legeni-staging
+app_replicas: 1
+app_color: "#f59e0b"        # orange = staging
+app_nodeport: 30080
+redis_nodeport: 30379
+app_image_tag: "{{ lookup('file', '../VERSION') }}-{{ build_number | default('local') }}"
+

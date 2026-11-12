@@ -1,0 +1,153 @@
+---
+# deploy.yml – Déploie legeni-webapp dans Kubernetes (staging ou prod)
+# Usage :
+#   ansible-playbook ansible/deploy.yml -e target_env=staging -e build_number=42
+#   ansible-playbook ansible/deploy.yml -e target_env=prod    -e build_number=42
+
+- name: "Déploiement Legeni WebApp → {{ target_env | default('staging') }}"
+  hosts: control
+  become: false
+
+  vars_files:
+    - "vars/{{ target_env | default('staging') }}.yml"
+    - vars/vault.yml
+
+  vars:
+    kubeconfig: "{{ lookup('env', 'KUBECONFIG') | default(ansible_env.HOME + '/.kube/config') }}"
+    manifests_dir: /tmp/legeni-{{ namespace }}
+
+  tasks:
+
+    # ── 0. Pré-requis ──────────────────────────────────────────────────────
+    - name: Créer le répertoire temporaire des manifests
+      file:
+        path: "{{ manifests_dir }}"
+        state: directory
+        mode: "0700"
+
+    - name: Créer le namespace si absent
+      kubernetes.core.k8s:
+        kubeconfig: "{{ kubeconfig }}"
+        api_version: v1
+        kind: Namespace
+        name: "{{ namespace }}"
+        state: present
+
+    # ── 1. Générer les manifests depuis les templates Jinja2 ───────────────
+    - name: Générer les manifests Kubernetes
+      template:
+        src: "templates/k8s/{{ item }}"
+        dest: "{{ manifests_dir }}/{{ item | replace('.j2', '') }}"
+      loop:
+        - redis-secret.yml.j2
+        - redis-statefulset.yml.j2
+        - webapp-deployment.yml.j2
+
+    # ── 2. Appliquer avec rollback automatique ─────────────────────────────
+    - name: Déployer Redis (Secret + StatefulSet)
+      block:
+        - name: Appliquer le Secret Redis
+          kubernetes.core.k8s:
+            kubeconfig: "{{ kubeconfig }}"
+            src: "{{ manifests_dir }}/redis-secret.yml"
+            state: present
+
+        - name: Appliquer le StatefulSet Redis
+          kubernetes.core.k8s:
+            kubeconfig: "{{ kubeconfig }}"
+            src: "{{ manifests_dir }}/redis-statefulset.yml"
+            state: present
+
+        - name: Attendre que Redis soit prêt
+          kubernetes.core.k8s_info:
+            kubeconfig: "{{ kubeconfig }}"
+            kind: StatefulSet
+            name: redis
+            namespace: "{{ namespace }}"
+          register: redis_info
+          until: >
+            redis_info.resources[0].status.readyReplicas is defined and
+            redis_info.resources[0].status.readyReplicas >= 1
+          retries: 20
+          delay: 10
+
+      rescue:
+        - name: "⚠️  Redis KO – suppression du StatefulSet défaillant"
+          kubernetes.core.k8s:
+            kubeconfig: "{{ kubeconfig }}"
+            kind: StatefulSet
+            name: redis
+            namespace: "{{ namespace }}"
+            state: absent
+          failed_when: false
+
+        - name: Échec du déploiement Redis
+          fail:
+            msg: "Redis n'a pas démarré correctement. Déploiement annulé."
+
+    - name: Déployer l'application Legeni WebApp
+      block:
+        - name: Appliquer le Deployment et le Service
+          kubernetes.core.k8s:
+            kubeconfig: "{{ kubeconfig }}"
+            src: "{{ manifests_dir }}/webapp-deployment.yml"
+            state: present
+
+        - name: Attendre la fin du rolling update
+          kubernetes.core.k8s_info:
+            kubeconfig: "{{ kubeconfig }}"
+            kind: Deployment
+            name: legeni-webapp
+            namespace: "{{ namespace }}"
+          register: deploy_info
+          until: >
+            deploy_info.resources[0].status.updatedReplicas is defined and
+            deploy_info.resources[0].status.updatedReplicas == deploy_info.resources[0].spec.replicas and
+            deploy_info.resources[0].status.availableReplicas is defined and
+            deploy_info.resources[0].status.availableReplicas == deploy_info.resources[0].spec.replicas
+          retries: 30
+          delay: 10
+
+        # ── Smoke test ─────────────────────────────────────────────────────
+        - name: Récupérer l'URL Minikube
+          command: minikube service legeni-webapp -n {{ namespace }} --url
+          register: app_url
+          changed_when: false
+
+        - name: "Smoke test – vérifier la version {{ app_image_tag }}"
+          uri:
+            url: "{{ app_url.stdout }}/api/info"
+            return_content: true
+            timeout: 10
+          register: smoke
+          until: >
+            smoke.status == 200 and
+            smoke.json.version is defined and
+            app_image_tag in smoke.json.version
+          retries: 5
+          delay: 5
+
+        - name: "✅ Smoke test OK – version {{ smoke.json.version }} en {{ target_env }}"
+          debug:
+            msg: "Application accessible à {{ app_url.stdout }}"
+
+      rescue:
+        # ── Rollback automatique ───────────────────────────────────────────
+        - name: "🔄 Smoke test KO – rollback automatique"
+          command: >
+            kubectl rollout undo deployment/legeni-webapp -n {{ namespace }}
+          environment:
+            KUBECONFIG: "{{ kubeconfig }}"
+
+        - name: Attendre la fin du rollback
+          command: >
+            kubectl rollout status deployment/legeni-webapp -n {{ namespace }} --timeout=120s
+          environment:
+            KUBECONFIG: "{{ kubeconfig }}"
+
+        - name: Échec du déploiement avec rollback effectué
+          fail:
+            msg: >
+              ❌ Déploiement {{ app_image_tag }} KO en {{ target_env }}.
+              Rollback vers la version précédente effectué automatiquement.
+

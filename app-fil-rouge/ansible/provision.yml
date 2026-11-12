@@ -1,0 +1,42 @@
+---
+# provision.yml – Installe Docker, Jenkins et Minikube sur la machine cible
+# Usage : ansible-playbook -i ansible/inventory.ini ansible/provision.yml
+# 2ᵉ exécution : changed=0 (idempotence garantie par les modules)
+
+- name: Provisionnement complet de l'infrastructure LEGENI
+  hosts: control
+  become: true
+
+  vars_files:
+    - vars/staging.yml
+    - vars/vault.yml  # chiffré avec ansible-vault (secrets Redis, etc.)
+
+  pre_tasks:
+    - name: Mise à jour du cache apt
+      apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+  roles:
+    - role: docker
+      tags: docker
+
+    - role: jenkins
+      tags: jenkins
+
+    - role: minikube
+      tags: minikube
+
+  post_tasks:
+    - name: Installer la collection kubernetes.core (Ansible Galaxy)
+      command: ansible-galaxy collection install kubernetes.core
+      become: false
+      changed_when: false
+
+    - name: Afficher le résumé
+      debug:
+        msg:
+          - "✅ Docker    : opérationnel"
+          - "✅ Jenkins   : http://localhost:{{ jenkins_http_port }}"
+          - "✅ Minikube  : {{ minikube_driver }} driver, {{ minikube_cpus }} CPUs, {{ minikube_memory }}Mo RAM"
+

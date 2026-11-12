@@ -1,0 +1,40 @@
+---
+- name: Télécharger kubectl
+  get_url:
+    url: "https://dl.k8s.io/release/{{ kubectl_version }}/bin/linux/amd64/kubectl"
+    dest: /usr/local/bin/kubectl
+    mode: "0755"
+
+- name: Télécharger Minikube
+  get_url:
+    url: https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
+    dest: /usr/local/bin/minikube
+    mode: "0755"
+
+- name: Vérifier si Minikube est déjà démarré
+  command: minikube status
+  register: minikube_status
+  changed_when: false
+  failed_when: false
+
+- name: Démarrer Minikube
+  command: >
+    minikube start
+    --driver={{ minikube_driver }}
+    --cpus={{ minikube_cpus }}
+    --memory={{ minikube_memory }}
+  when: "'Running' not in minikube_status.stdout"
+
+- name: Activer les addons Minikube
+  command: minikube addons enable {{ item }}
+  loop: "{{ minikube_addons }}"
+  register: addon_result
+  changed_when: "'was successfully enabled' in addon_result.stdout"
+  failed_when: false
+
+- name: Connecter Jenkins au réseau Minikube
+  command: docker network connect minikube jenkins
+  register: network_result
+  changed_when: network_result.rc == 0
+  failed_when: network_result.rc not in [0, 1]
+

@@ -1,0 +1,8 @@
+---
+# Ce fichier doit être CHIFFRÉ avec : ansible-vault encrypt ansible/vars/vault.yml
+# Déchiffrement : ansible-playbook ... --vault-password-file ~/.vault_pass
+
+redis_password: "ChangeMoi!S3cur3"
+docker_registry_user: "votre_dockerhub_user"
+docker_registry_password: "votre_dockerhub_token"
+

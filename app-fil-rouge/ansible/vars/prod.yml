@@ -1,0 +1,10 @@
+---
+# Variables de l'environnement PRODUCTION
+target_env: prod
+namespace: legeni-prod
+app_replicas: 3
+app_color: "#1f6feb"        # bleu = production
+app_nodeport: 30090
+redis_nodeport: 30389
+app_image_tag: "{{ lookup('file', '../VERSION') }}-{{ build_number | default('local') }}"
+

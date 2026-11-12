@@ -1,0 +1,10 @@
+---
+minikube_version: latest
+minikube_driver: docker
+minikube_cpus: 2
+minikube_memory: 4096
+minikube_addons:
+  - metrics-server
+  - ingress
+kubectl_version: stable
+
