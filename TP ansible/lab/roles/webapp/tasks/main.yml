@@ -29,7 +29,7 @@
     published_ports:
       - "{{ webapp_port }}:5000"
     restart_policy: unless-stopped
-  no_log: true
+  # no_log retiré pour voir l'erreur exacte
 
 - name: Attendre que l'application soit prête
   ansible.builtin.uri:

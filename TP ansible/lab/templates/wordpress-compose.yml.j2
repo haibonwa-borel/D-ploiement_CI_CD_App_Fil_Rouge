@@ -10,9 +10,11 @@ services:
     volumes:
       - db_data:/var/lib/mysql
     healthcheck:
-      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
-      interval: 10s
-      retries: 10
+      test: ["CMD-SHELL", "mariadb-admin ping -h localhost -p$MARIADB_ROOT_PASSWORD || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+      start_period: 10s
     restart: unless-stopped
 
   wordpress:
